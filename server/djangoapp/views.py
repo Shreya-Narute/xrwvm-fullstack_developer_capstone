@@ -1,65 +1,197 @@
-# Uncomment the required imports before adding the code
 
-# from django.shortcuts import render
-# from django.http import HttpResponseRedirect, HttpResponse
-# from django.contrib.auth.models import User
-# from django.shortcuts import get_object_or_404, render, redirect
-# from django.contrib.auth import logout
-# from django.contrib import messages
-# from datetime import datetime
+import json
+import logging
+from datetime import datetime
 
 from django.http import JsonResponse
-from django.contrib.auth import login, authenticate
-import logging
-import json
+from django.contrib.auth import login, authenticate, logout
+from django.contrib.auth.models import User
+from django.contrib import messages
 from django.views.decorators.csrf import csrf_exempt
-# from .populate import initiate
 
+from .restapis import (
+    get_request,
+    analyze_review_sentiments,
+    post_review,
+)
 
-# Get an instance of a logger
 logger = logging.getLogger(__name__)
 
 
-# Create your views here.
-
-# Create a `login_request` view to handle sign in request
 @csrf_exempt
 def login_user(request):
-    # Get username and password from request.POST dictionary
-    data = json.loads(request.body)
-    username = data['userName']
-    password = data['password']
-    # Try to check if provide credential can be authenticated
-    user = authenticate(username=username, password=password)
-    data = {"userName": username}
-    if user is not None:
-        # If user is valid, call login method to login current user
-        login(request, user)
-        data = {"userName": username, "status": "Authenticated"}
-    return JsonResponse(data)
+    if request.method != 'POST':
+        return JsonResponse(
+            {'error': 'POST method required'},
+            status=405
+        )
 
-# Create a `logout_request` view to handle sign out request
-# def logout_request(request):
-# ...
+    try:
+        data = json.loads(request.body)
+        username = data.get('userName', '')
+        password = data.get('password', '')
 
-# Create a `registration` view to handle sign up request
-# @csrf_exempt
-# def registration(request):
-# ...
+        user = authenticate(
+            request,
+            username=username,
+            password=password
+        )
 
-# # Update the `get_dealerships` view to render the index page with
-# a list of dealerships
-# def get_dealerships(request):
-# ...
+        if user is not None:
+            login(request, user)
+            return JsonResponse({
+                'userName': username,
+                'status': 'Authenticated'
+            })
 
-# Create a `get_dealer_reviews` view to render the reviews of a dealer
-# def get_dealer_reviews(request,dealer_id):
-# ...
+        return JsonResponse({
+            'userName': username,
+            'status': 'Invalid credentials'
+        }, status=401)
 
-# Create a `get_dealer_details` view to render the dealer details
-# def get_dealer_details(request, dealer_id):
-# ...
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse(
+            {'error': 'Invalid request data'},
+            status=400
+        )
 
-# Create a `add_review` view to submit a review
-# def add_review(request):
-# ...
+
+def logout_request(request):
+    logout(request)
+    return JsonResponse({'status': 'Logged out'})
+
+
+@csrf_exempt
+def registration(request):
+    if request.method != 'POST':
+        return JsonResponse(
+            {'error': 'POST method required'},
+            status=405
+        )
+
+    try:
+        data = json.loads(request.body)
+        username = data.get('userName', '').strip()
+        password = data.get('password', '')
+
+        if not username or not password:
+            return JsonResponse(
+                {'error': 'Username and password are required'},
+                status=400
+            )
+
+        if User.objects.filter(username=username).exists():
+            return JsonResponse(
+                {'error': 'Username already exists'},
+                status=400
+            )
+
+        user = User.objects.create_user(
+            username=username,
+            password=password
+        )
+
+        return JsonResponse({
+            'userName': user.username,
+            'status': 'Registered'
+        }, status=201)
+
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse(
+            {'error': 'Invalid request data'},
+            status=400
+        )
+
+
+def get_dealerships(request):
+    dealerships = get_request('/fetchDealers')
+
+    if dealerships is None:
+        return JsonResponse(
+            {'error': 'Unable to fetch dealerships'},
+            status=502
+        )
+
+    return JsonResponse({'dealerships': dealerships})
+
+
+def get_dealer_reviews(request, dealer_id):
+    reviews = get_request(
+        f'/fetchReviews/dealer/{dealer_id}'
+    )
+
+    if reviews is None:
+        return JsonResponse(
+            {'error': 'Unable to fetch reviews'},
+            status=502
+        )
+
+    return JsonResponse({
+        'dealer_id': dealer_id,
+        'reviews': reviews
+    })
+
+
+def get_dealer_details(request, dealer_id):
+    dealer = get_request(f'/fetchDealer/{dealer_id}')
+
+    if dealer is None:
+        return JsonResponse(
+            {'error': 'Dealership not found'},
+            status=404
+        )
+
+    return JsonResponse({'dealer': dealer})
+
+
+@csrf_exempt
+def add_review(request):
+    if request.method != 'POST':
+        return JsonResponse(
+            {'error': 'POST method required'},
+            status=405
+        )
+
+    try:
+        data = json.loads(request.body)
+
+        required_fields = [
+            'name',
+            'dealership',
+            'review',
+            'purchase',
+            'purchase_date',
+            'car_make',
+            'car_model',
+            'car_year',
+        ]
+
+        for field in required_fields:
+            if field not in data:
+                return JsonResponse(
+                    {'error': f'Missing field: {field}'},
+                    status=400
+                )
+
+        sentiment = analyze_review_sentiments(
+            data['review']
+        )
+
+        if sentiment is not None:
+            data['sentiment'] = sentiment
+
+        result = post_review(data)
+
+        if result is None:
+            return JsonResponse(
+                {'error': 'Unable to submit review'},
+                status=502
+            )
+
+        return JsonResponse(result, status=201)
+
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse(
+            {'error': 'Invalid request data'},
+            status=400
+        )
