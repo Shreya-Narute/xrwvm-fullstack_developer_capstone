@@ -39,6 +39,10 @@ const reviews = new Schema({
     type: Number,
     required: true
   },
+	sentiment: {
+  type: String,
+  default: 'neutral'
+},
 });
 
 module.exports = mongoose.model('reviews', reviews);
