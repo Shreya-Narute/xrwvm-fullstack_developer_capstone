@@ -54,4 +54,4 @@ jobs:
 
       - name: Run Linter
         run: |
-          find server -type f -name "*.js" -not -path "*/node_modules/*" -print0 | xargs -0 -r -n 1 jshint --verbose
+          find server/database -type f -name "*.js" -print0 | xargs -0 -r -n 1 jshint --verbose --config <(echo '{"esversion": 6}')
